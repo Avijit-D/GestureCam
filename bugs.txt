@@ -1,0 +1,11 @@
+after zoom the screen gets very small and ui elements gets cropped out 
+i want other screen around the camera feed which contains the ui elements so it doesnt get cropped
+
+a way to close the app
+
+editing mode brightness saturation
+warmth ambience detail contrast 
+
+mirror selfie
+
+blur bacground

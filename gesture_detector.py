@@ -10,17 +10,17 @@ from urllib.request import urlretrieve
 
 import numpy as np
 
-try:  # pragma: no cover - runtime dependency check
-    import cv2  # type: ignore[import]
-except ImportError as exc:  # pragma: no cover
+try:
+    import cv2
+except ImportError as exc:
     raise ImportError("OpenCV (opencv-python) is required for gesture detection") from exc
 
-try:  # pragma: no cover - runtime dependency check
-    from mediapipe import Image as MPImage  # type: ignore[import]
-    from mediapipe import ImageFormat  # type: ignore[import]
-    from mediapipe.tasks import python as mp_python  # type: ignore[import]
-    from mediapipe.tasks.python import vision  # type: ignore[import]
-except ImportError as exc:  # pragma: no cover
+try:
+    from mediapipe import Image as MPImage
+    from mediapipe import ImageFormat
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision
+except ImportError as exc:
     raise ImportError("MediaPipe is required for gesture detection. Install mediapipe.") from exc
 
 
@@ -55,15 +55,14 @@ class GestureRecognition:
     def __init__(self, model_path: Path | str | None = None) -> None:
         self.model_path = self._ensure_model_exists(model_path)
         self._landmarker = self._create_landmarker()
-        self._result_queue: Deque[Tuple[int, vision.HandLandmarkerResult]] = deque()
-        self._hand_history: Dict[str, Deque[Tuple[int, float]]] = defaultdict(deque)
+        self._result_queue: Deque[Tuple[int, vision.HandLandmarkerResult]] = deque(maxlen=2)  # Reduced for lower latency
+        self._hand_history: Dict[str, Deque[Tuple[int, float]]] = defaultdict(lambda: deque(maxlen=10))
         self._last_swipe_timestamp: int = 0
         self._last_landmarks: List[np.ndarray] = []
         self._last_landmark_ids: List[str] = []
 
     def _ensure_model_exists(self, model_path: Path | str | None) -> Path:
         """Download the MediaPipe model locally if it is absent."""
-
         default_model = Path("models/hand_landmarker.task")
         path = Path(model_path) if model_path else default_model
         if not path.exists():
@@ -77,9 +76,9 @@ class GestureRecognition:
             base_options=base_options,
             running_mode=vision.RunningMode.LIVE_STREAM,
             num_hands=2,
-            min_hand_detection_confidence=0.5,
-            min_hand_presence_confidence=0.5,
-            min_tracking_confidence=0.5,
+            min_hand_detection_confidence=0.4,  # Reduced from 0.5 for better detection
+            min_hand_presence_confidence=0.4,   # Reduced from 0.5
+            min_tracking_confidence=0.4,         # Reduced from 0.5
             result_callback=self._result_callback,
         )
         return vision.HandLandmarker.create_from_options(options)
@@ -94,13 +93,17 @@ class GestureRecognition:
 
     def classify(self, frame: np.ndarray, timestamp_ms: int) -> List[HandGesture]:
         """Analyze a frame and return the gestures detected."""
-
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = MPImage(image_format=ImageFormat.SRGB, data=rgb_frame)
         self._landmarker.detect_async(mp_image, timestamp_ms)
 
         gestures: List[HandGesture] = []
-        while self._result_queue and self._result_queue[0][0] <= timestamp_ms:
+        # Always use the most recent result available, discard older ones
+        # This ensures we always render the LATEST hand position, not old queued results
+        if self._result_queue:
+            # Skip to the last (most recent) result
+            while len(self._result_queue) > 1:
+                self._result_queue.popleft()
             ts, result = self._result_queue.popleft()
             gestures = self._interpret_result(result, ts)
         return gestures
@@ -111,6 +114,7 @@ class GestureRecognition:
         gestures: List[HandGesture] = []
         landmark_store: List[np.ndarray] = []
         landmark_ids: List[str] = []
+        
         for index, landmarks in enumerate(result.hand_landmarks):
             handedness = None
             score = 1.0
@@ -127,10 +131,12 @@ class GestureRecognition:
             gestures.extend(
                 self._classify_static_gestures(coords, handedness, key, score)
             )
+            
             swipe = self._detect_swipe(key, coords, timestamp_ms)
             if swipe:
                 gestures.append(HandGesture(swipe, 0.9, handedness, hand_id=key))
 
+        # Always update landmarks, even if empty (clears stale data immediately)
         self._last_landmarks = landmark_store
         self._last_landmark_ids = landmark_ids
         return gestures
@@ -155,9 +161,6 @@ class GestureRecognition:
         index_tip = coords[FINGER_JOINTS["index"][3]]
         index_mcp = coords[FINGER_JOINTS["index"][0]]
 
-        all_extended = all(
-            fingers_extended[f] for f in ("index", "middle", "ring", "pinky")
-        )
         non_thumb_extended = sum(
             1 for f in ("index", "middle", "ring", "pinky") if fingers_extended[f]
         )
@@ -165,7 +168,7 @@ class GestureRecognition:
         pinch_distance = float(np.linalg.norm(thumb_tip[:2] - index_tip[:2]))
         wrist_radius = float(np.linalg.norm(index_mcp[:2] - wrist[:2]))
 
-        # Use robust open palm detection with all criteria
+        # OPTIMIZED: Check open palm first (most common gesture)
         if self._is_open_palm_robust(coords, fingers_extended, extended_count, confidence, wrist_radius):
             gestures.append(
                 HandGesture(
@@ -193,8 +196,13 @@ class GestureRecognition:
         if self._is_index_only(fingers_extended, coords):
             gestures.append(HandGesture("index_only", 0.9, handedness, hand_id))
 
+        # Check pinky_only and rock_sign with priority - pinky_only first
+        # Rock sign requires BOTH thumb and pinky, so check it only if pinky_only fails
         if self._is_pinky_only(fingers_extended, coords):
             gestures.append(HandGesture("pinky_only", 0.9, handedness, hand_id))
+        elif self._is_rock_sign(fingers_extended, coords):
+            # Only detect rock_sign if pinky_only is not detected
+            gestures.append(HandGesture("rock_sign", 0.9, handedness, hand_id))
 
         if self._is_thumbs_up(coords, fingers_extended):
             gestures.append(HandGesture("thumbs_up", 0.9, handedness, hand_id))
@@ -214,18 +222,20 @@ class GestureRecognition:
     ) -> bool:
         """Robust open palm detection with multiple criteria."""
         
-        # 1. Extended fingers >= 3.8 (tolerant, allows more curled fingers)
-        if extended_count < 3.8:
+        # 1. Extended fingers >= 4 (prevents three fingers from being detected as open palm)
+        if extended_count < 4:
             return False
         
-        # 2. Hand confidence >= 0.6
-        if confidence < 0.6:
+        # 2. Hand confidence >= 0.5
+        if confidence < 0.5:
             return False
         
-        # 3. Orientation check: DISABLED
+        # 3. Thumb check: thumb should be extended for open palm
+        if not fingers_extended.get("thumb", False):
+            return False
         
-        # 4. Basic palm size check (normalized, will be refined in main.py with frame dimensions)
-        if palm_radius < 0.08:  # Minimum reasonable palm size
+        # 4. Basic palm size check
+        if palm_radius < 0.06:
             return False
         
         return True
@@ -239,18 +249,18 @@ class GestureRecognition:
         mcp, pip, dip, tip = joint_indices
         v1 = coords[pip] - coords[mcp]
         v2 = coords[tip] - coords[pip]
+        
         if np.linalg.norm(v1) < 1e-6 or np.linalg.norm(v2) < 1e-6:
             return False
 
         alignment = float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
-        straight_enough = alignment > 0.5
+        straight_enough = alignment > 0.4  # More lenient (was 0.5)
 
-        # Tip should be higher (smaller y) than the pip for an upright palm.
-        vertical_check = coords[tip][1] < coords[pip][1]
+        # More lenient vertical check
+        vertical_check = coords[tip][1] < coords[pip][1] + 0.03  # Increased tolerance
 
         if handedness == "left":
-            # Allow a bit more tolerance for mirrored orientation.
-            vertical_check = coords[tip][1] < coords[pip][1] + 0.02
+            vertical_check = coords[tip][1] < coords[pip][1] + 0.04
 
         return straight_enough and vertical_check
 
@@ -325,11 +335,9 @@ class GestureRecognition:
         ):
             return False
 
-        # Thumb should not be extended (or only slightly)
         if fingers_extended["thumb"]:
             return False
 
-        # Check that the three fingers are reasonably separated
         index_tip = coords[FINGER_JOINTS["index"][3]]
         middle_tip = coords[FINGER_JOINTS["middle"][3]]
         ring_tip = coords[FINGER_JOINTS["ring"][3]]
@@ -337,69 +345,97 @@ class GestureRecognition:
         index_middle_sep = float(np.linalg.norm(index_tip[:2] - middle_tip[:2]))
         middle_ring_sep = float(np.linalg.norm(middle_tip[:2] - ring_tip[:2]))
 
-        # Fingers should be reasonably spread out
         return index_middle_sep > 0.06 and middle_ring_sep > 0.06
 
     def _is_index_only(
         self, fingers_extended: Dict[str, bool], coords: np.ndarray
     ) -> bool:
-        """Detect index-only gesture for zoom in: only index finger extended, all others folded."""
-        # Index finger must be extended
+        """Detect index-only gesture for zoom in."""
         if not fingers_extended["index"]:
             return False
         
-        # Middle, ring, and pinky must be folded
         if any(fingers_extended[f] for f in ("middle", "ring", "pinky")):
             return False
         
-        # Thumb must not be extended (allow slight curl but not extended)
         if fingers_extended["thumb"]:
             return False
         
-        # Additional check: ensure index finger is clearly extended
         index_tip = coords[FINGER_JOINTS["index"][3]]
         index_pip = coords[FINGER_JOINTS["index"][2]]
-        index_mcp = coords[FINGER_JOINTS["index"][0]]
         
-        # Index finger should be reasonably extended (tip higher than pip)
         index_extended = index_tip[1] < index_pip[1]
         
-        # Check that other fingers are indeed folded (tips should be lower/closer to palm)
         middle_tip = coords[FINGER_JOINTS["middle"][3]]
         middle_pip = coords[FINGER_JOINTS["middle"][2]]
-        middle_folded = middle_tip[1] >= middle_pip[1] - 0.02  # Allow small tolerance
+        middle_folded = middle_tip[1] >= middle_pip[1] - 0.02
         
         return index_extended and middle_folded
 
     def _is_pinky_only(
         self, fingers_extended: Dict[str, bool], coords: np.ndarray
     ) -> bool:
-        """Detect pinky-only gesture for zoom out: only pinky finger extended, all others folded."""
-        # Pinky finger must be extended
+        """Detect pinky-only gesture for zoom out."""
         if not fingers_extended["pinky"]:
             return False
         
-        # Index, middle, and ring must be folded
         if any(fingers_extended[f] for f in ("index", "middle", "ring")):
             return False
         
-        # Thumb must not be extended (allow slight curl but not extended)
         if fingers_extended["thumb"]:
             return False
         
-        # Additional check: ensure pinky finger is clearly extended
         pinky_tip = coords[FINGER_JOINTS["pinky"][3]]
         pinky_pip = coords[FINGER_JOINTS["pinky"][2]]
         
-        # Pinky finger should be reasonably extended (tip higher than pip)
         pinky_extended = pinky_tip[1] < pinky_pip[1]
         
-        # Check that other fingers are indeed folded (tips should be lower/closer to palm)
         ring_tip = coords[FINGER_JOINTS["ring"][3]]
         ring_pip = coords[FINGER_JOINTS["ring"][2]]
-        ring_folded = ring_tip[1] >= ring_pip[1] - 0.02  # Allow small tolerance
+        ring_folded = ring_tip[1] >= ring_pip[1] - 0.02
         
         return pinky_extended and ring_folded
+
+    def _is_rock_sign(
+        self, fingers_extended: Dict[str, bool], coords: np.ndarray
+    ) -> bool:
+        """Detect rock sign: thumb and pinky extended, index/middle/ring folded.
+        Must be strict to avoid conflicts with pinky_only."""
+        # BOTH thumb and pinky MUST be extended (strict requirement)
+        if not fingers_extended.get("thumb", False) or not fingers_extended.get("pinky", False):
+            return False
+        
+        # Index, middle, and ring MUST be folded (strict requirement)
+        if any(fingers_extended.get(f, False) for f in ("index", "middle", "ring")):
+            return False
+        
+        # Verify thumb is clearly extended
+        thumb_tip = coords[FINGER_JOINTS["thumb"][3]]
+        thumb_pip = coords[FINGER_JOINTS["thumb"][2]]
+        thumb_extended = thumb_tip[1] < thumb_pip[1]
+        
+        # Verify pinky is clearly extended
+        pinky_tip = coords[FINGER_JOINTS["pinky"][3]]
+        pinky_pip = coords[FINGER_JOINTS["pinky"][2]]
+        pinky_extended = pinky_tip[1] < pinky_pip[1]
+        
+        # Additional validation: thumb should be significantly extended (not just slightly)
+        # This helps distinguish from cases where thumb is barely extended
+        thumb_extension_amount = thumb_pip[1] - thumb_tip[1]  # Positive if extended upward
+        min_thumb_extension = 0.03  # Minimum extension threshold
+        
+        # Additional validation: pinky should be clearly separated from ring finger
+        ring_tip = coords[FINGER_JOINTS["ring"][3]]
+        pinky_ring_separation = float(np.linalg.norm(pinky_tip[:2] - ring_tip[:2]))
+        min_separation = 0.05  # Minimum separation to ensure pinky is clearly extended
+        
+        # Verify ring finger is folded
+        ring_pip = coords[FINGER_JOINTS["ring"][2]]
+        ring_folded = ring_tip[1] >= ring_pip[1] - 0.02
+        
+        return (thumb_extended and pinky_extended and 
+                thumb_extension_amount >= min_thumb_extension and
+                pinky_ring_separation >= min_separation and
+                ring_folded)
 
     def _detect_swipe(
         self, key: str, coords: np.ndarray, timestamp_ms: int
@@ -408,7 +444,6 @@ class GestureRecognition:
         wrist_x = float(coords[0][0])
         history.append((timestamp_ms, wrist_x))
 
-        # Retain only the last 500 ms of history.
         while history and timestamp_ms - history[0][0] > 500:
             history.popleft()
 
@@ -432,7 +467,6 @@ class GestureRecognition:
 
     def get_landmarks(self) -> List[Tuple[str, np.ndarray]]:
         """Return the most recent hand landmarks keyed by hand identifier."""
-
         return [
             (hand_id, coords.copy())
             for hand_id, coords in zip(self._last_landmark_ids, self._last_landmarks)
@@ -441,4 +475,3 @@ class GestureRecognition:
     def close(self) -> None:
         if self._landmarker:
             self._landmarker.close()
-
