@@ -227,7 +227,7 @@ class GestureRecognition:
             return False
         
         # 2. Hand confidence >= 0.5
-        if confidence < 0.5:
+        if confidence < 0.6:
             return False
         
         # 3. Thumb check: thumb should be extended for open palm

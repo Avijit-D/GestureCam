@@ -26,49 +26,7 @@ MODERN_TEXT = (248, 250, 252)  # Off-white
 MODERN_TEXT_DIM = (148, 163, 184)  # Muted gray
 
 def _modern_shadow(img, top_left, bottom_right, blur=15, alpha=0.4):
-    """Apply modern soft shadow effect - optimized to only blur shadow region."""
-    x1, y1 = top_left
-    x2, y2 = bottom_right
-    
-    # Clamp coordinates to image bounds
-    h, w = img.shape[:2]
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(w, x2)
-    y2 = min(h, y2)
-    
-    if x2 <= x1 or y2 <= y1:
-        return img
-    
-    # Only blur a small region around the shadow (much faster than full image blur)
-    # Expand region slightly for blur effect
-    blur_margin = min(blur, 8)  # Cap blur margin for performance
-    region_x1 = max(0, x1 - blur_margin)
-    region_y1 = max(0, y1 - blur_margin)
-    region_x2 = min(w, x2 + blur_margin)
-    region_y2 = min(h, y2 + blur_margin)
-    
-    # Extract region
-    region = img[region_y1:region_y2, region_x1:region_x2].copy()
-    
-    # Create shadow only in the region
-    shadow_region = np.zeros_like(region)
-    local_x1 = x1 - region_x1
-    local_y1 = y1 - region_y1
-    local_x2 = x2 - region_x1
-    local_y2 = y2 - region_y1
-    cv2.rectangle(shadow_region, (local_x1, local_y1), (local_x2, local_y2), (0, 0, 0), -1)
-    
-    # Blur only the small region (much faster)
-    reduced_blur = min(blur, 8)  # Cap blur for performance
-    if reduced_blur > 0:
-        kernel_size = reduced_blur * 2 + 1
-        shadow_region = cv2.GaussianBlur(shadow_region, (kernel_size, kernel_size), reduced_blur / 2)
-    
-    # Blend shadow region back
-    blended_region = cv2.addWeighted(region, 1.0, shadow_region, alpha, 0)
-    img[region_y1:region_y2, region_x1:region_x2] = blended_region
-    
+    """Modern shadow disabled: return image unchanged."""
     return img
 
 def _rounded_rect(img, top_left, bottom_right, color, radius=12, thickness=-1, alpha=1.0):

@@ -19,7 +19,6 @@ import numpy as np
 from camera_controller import CameraController
 from gesture_detector import GestureRecognition, HandGesture
 from utils.drawing import (
-    build_composite_frame,
     draw_countdown,
     draw_hold_progress,
     draw_landmarks,
@@ -650,9 +649,9 @@ def run(camera_index: int = 0) -> None:
                     camera_feed = draw_countdown(camera_feed, remaining)
 
             # === UI LAYER ===
-            composite_frame, viewport_rect = build_composite_frame(camera_feed, ui_padding=100)
-            viewport_x, viewport_y, viewport_width, viewport_height = viewport_rect
+            composite_frame = camera_feed.copy()
             composite_height, composite_width = composite_frame.shape[:2]
+            viewport_x, viewport_y, viewport_width, viewport_height = (0, 0, composite_width, composite_height)
 
             left_panel_x = 10
             right_panel_x = viewport_x + viewport_width + 10
