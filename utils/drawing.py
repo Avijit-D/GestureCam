@@ -1,3 +1,4 @@
+# utils/drawing.py
 """Helper functions for drawing hand landmarks and overlays."""
 
 from __future__ import annotations
@@ -17,23 +18,7 @@ HAND_CONNECTIONS: Tuple[Tuple[int, int], ...] = (
     (5, 9), (9, 13), (13, 17),  # Palm connections
 )
 
-# Modern color palette
-MODERN_BG = (25, 25, 28)  # Near black with slight warmth
-MODERN_ACCENT = (88, 166, 255)  # Vibrant blue
-MODERN_SUCCESS = (16, 185, 129)  # Modern green
-MODERN_WARNING = (251, 191, 36)  # Amber
-MODERN_TEXT = (248, 250, 252)  # Off-white
-MODERN_TEXT_DIM = (148, 163, 184)  # Muted gray
-
-def _modern_shadow(img, top_left, bottom_right, blur=15, alpha=0.4):
-    """Apply modern soft shadow effect."""
-    x1, y1 = top_left
-    x2, y2 = bottom_right
-    shadow = np.zeros_like(img)
-    cv2.rectangle(shadow, (x1, y1), (x2, y2), (0, 0, 0), -1)
-    shadow = cv2.GaussianBlur(shadow, (blur*2+1, blur*2+1), blur/2)
-    return cv2.addWeighted(img, 1.0, shadow, alpha, 0)
-
+# Small utility
 def _rounded_rect(img, top_left, bottom_right, color, radius=12, thickness=-1, alpha=1.0):
     x1, y1 = top_left
     x2, y2 = bottom_right
@@ -89,20 +74,20 @@ def draw_landmarks(
         cy = int(sum(ys) / len(ys))
         palm_radius = int(max(40, min(width, height) * 0.06))
         overlay = output.copy()
-        cv2.circle(overlay, (cx, cy), palm_radius, MODERN_ACCENT[::-1], -1)
-        cv2.addWeighted(overlay, 0.08, output, 0.92, 0, output)
+        cv2.circle(overlay, (cx, cy), palm_radius, (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.15, output, 0.85, 0, output)
 
-        # Draw connections with modern gradient-like effect
+        # Draw connections (reduced thickness for better performance)
         for start, end in HAND_CONNECTIONS:
             if start < len(points) and end < len(points):
-                cv2.line(output, points[start], points[end], MODERN_ACCENT[::-1], 2, lineType=cv2.LINE_AA)
+                cv2.line(output, points[start], points[end], (0, 200, 120), 1, lineType=cv2.LINE_AA)
 
-        # Draw joints with modern style
+        # Draw joints with gradient-like color (reduced size for better performance)
         for i, point in enumerate(points):
-            # Outer glow
-            cv2.circle(output, point, 5, MODERN_ACCENT[::-1], 1, lineType=cv2.LINE_AA)
-            # Inner fill
-            cv2.circle(output, point, 3, MODERN_TEXT[::-1], -1, lineType=cv2.LINE_AA)
+            color = (int(200 - (i * 4) % 180), 120, 255)  # varied color for better visibility
+            cv2.circle(output, point, 3, color, -1, lineType=cv2.LINE_AA)
+            # small white center
+            cv2.circle(output, point, 1, (255, 255, 255), -1)
 
     return output
 
@@ -149,27 +134,25 @@ def overlay_gestures(
     # Build overlay region
     output = frame.copy()
     x, y = origin
-    padding_x = 18
-    padding_y = 12
-    line_h = 32
+    padding_x = 14
+    padding_y = 10
+    line_h = 28
     total_h = padding_y * 2 + line_h * max(1, len(gestures))
-    total_w = max((cv2.getTextSize(g, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)[0][0] for g in gestures), default=120) + padding_x * 2
+    total_w = max((cv2.getTextSize(g, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0][0] for g in gestures), default=120) + padding_x * 2
 
-    # Modern shadow effect
-    output = _modern_shadow(output, (x - 6, y - 6), (x + total_w + 6, y + total_h + 6), blur=12, alpha=0.35)
-    
-    # Draw rounded translucent background with modern styling
-    _rounded_rect(output, (x - 6, y - 6), (x + total_w + 6, y + total_h + 6), MODERN_BG[::-1], radius=16, alpha=0.85)
+    # Draw rounded translucent background
+    panel_color = (30, 30, 30)
+    _rounded_rect(output, (x - 8, y - 8), (x + total_w + 8, y + total_h + 8), panel_color, radius=12, alpha=0.6)
 
-    # Draw each gesture label with modern font
-    yy = y + padding_y + 8
+    # Draw each gesture label
+    yy = y + padding_y + 6
     for gesture in gestures:
-        cv2.putText(output, gesture, (x + padding_x, yy), cv2.FONT_HERSHEY_SIMPLEX, 0.65, MODERN_TEXT[::-1], 2, lineType=cv2.LINE_AA)
+        cv2.putText(output, gesture, (x + padding_x, yy), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2, lineType=cv2.LINE_AA)
         yy += line_h
 
     # store cache
     try:
-        cropped = output[y - 6: y + total_h + 6, x - 6: x + total_w + 6].copy()
+        cropped = output[y - 8: y + total_h + 8, x - 8: x + total_w + 8].copy()
         if len(_overlay_cache) < 12:
             _overlay_cache[cache_key_tuple] = cropped
     except Exception:
@@ -181,35 +164,31 @@ def draw_mode_banner(
     frame: np.ndarray,
     text: str,
     *,
-    color: Tuple[int, int, int] = None,
-    alpha: float = 0.9,
+    color: Tuple[int, int, int] = (56, 142, 60),
+    alpha: float = 0.85,
 ) -> np.ndarray:
     """Overlay a semi-transparent banner at the top-left with mode text. Polished visually."""
-    if color is None:
-        color = MODERN_SUCCESS
-    
     output = frame.copy()
-    padding = 16
-    font_scale = 0.75
+    padding = 12
+    font_scale = 0.8
     thickness = 2
     text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-    width = text_size[0] + padding * 2 + 24
-    height = text_size[1] + padding * 2 + 4
+    width = text_size[0] + padding * 2 + 30
+    height = text_size[1] + padding * 2
 
-    # Modern multi-layered shadow
-    output = _modern_shadow(output, (12, 12), (12 + width, 12 + height), blur=18, alpha=0.3)
-    
-    # Background with modern color
-    _rounded_rect(output, (12, 12), (12 + width, 12 + height), color[::-1], radius=18, alpha=alpha)
-    
-    # Text with perfect positioning
+    # shadow
+    shadow = output.copy()
+    _rounded_rect(shadow, (10 + 3, 10 + 3), (10 + width + 3, 10 + height + 3), (10, 10, 10), radius=14, alpha=0.35)
+    cv2.addWeighted(shadow, 0.6, output, 0.4, 0, output)
+
+    _rounded_rect(output, (10, 10), (10 + width, 10 + height), color, radius=14, alpha=alpha)
     cv2.putText(
         output,
         text,
-        (12 + padding, 12 + padding + text_size[1]),
+        (10 + padding, 10 + padding + text_size[1] - 2),
         cv2.FONT_HERSHEY_SIMPLEX,
         font_scale,
-        MODERN_TEXT[::-1],
+        (255, 255, 255),
         thickness,
         lineType=cv2.LINE_AA,
     )
@@ -223,31 +202,24 @@ def draw_countdown(frame: np.ndarray, remaining: float) -> np.ndarray:
     text = str(seconds)
     # animate font slightly with remaining fract
     fract = remaining - int(remaining)
-    scale = 1.0 + 0.2 * (1.0 - fract)
-    font_scale = min(width, height) / 250 * scale
-    text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 8)
+    scale = 1.0 + 0.25 * (1.0 - fract)
+    font_scale = min(width, height) / 300 * scale
+    text_size, _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, font_scale, 6)
     origin = (
         (width - text_size[0]) // 2,
         (height + text_size[1]) // 2,
     )
-    
-    # Modern layered shadow effect
-    for offset in range(8, 0, -2):
-        alpha = 0.15 * (offset / 8.0)
-        overlay = output.copy()
-        cv2.putText(overlay, text, (origin[0] + offset//2, origin[1] + offset//2), 
-                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 12, lineType=cv2.LINE_AA)
-        cv2.addWeighted(overlay, alpha, output, 1 - alpha, 0, output)
-    
-    # Main text with modern accent color
+    # halo
+    for offset in range(6, 2, -2):
+        cv2.putText(output, text, (origin[0], origin[1] + offset), cv2.FONT_HERSHEY_DUPLEX, font_scale, (10, 10, 10), 10, lineType=cv2.LINE_AA)
     cv2.putText(
         output,
         text,
         origin,
-        cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.FONT_HERSHEY_DUPLEX,
         font_scale,
-        MODERN_ACCENT[::-1],
-        8,
+        (0, 180, 255),
+        6,
         lineType=cv2.LINE_AA,
     )
     return output
@@ -291,12 +263,11 @@ def draw_hold_progress(
     if center is None:
         center = (width - radius - 32, radius + 24)
 
-    # Modern colors
-    base_color = MODERN_TEXT_DIM[::-1]
-    progress_color = MODERN_ACCENT[::-1]
+    base_color = (100, 100, 100)
+    progress_color = (10, 200, 220)
 
-    # Background ring with modern styling
-    cv2.circle(output, center, radius, base_color, 5, lineType=cv2.LINE_AA)
+    # background ring
+    cv2.circle(output, center, radius, base_color, 6, lineType=cv2.LINE_AA)
 
     if progress > 0.001:
         start_angle = -90
@@ -309,17 +280,17 @@ def draw_hold_progress(
             start_angle,
             end_angle,
             progress_color,
-            7,
+            8,
             lineType=cv2.LINE_AA,
         )
 
     label = f"{int(progress * 100):d}%"
-    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
     text_origin = (
         center[0] - text_size[0] // 2,
         center[1] + text_size[1] // 2,
     )
-    cv2.putText(output, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.55, MODERN_TEXT[::-1], 2, lineType=cv2.LINE_AA)
+    cv2.putText(output, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (240, 240, 240), 2, lineType=cv2.LINE_AA)
     return output
 
 def draw_edit_ui(
@@ -335,148 +306,135 @@ def draw_edit_ui(
     
     # Parameter boxes at bottom
     param_names = ["brightness", "contrast", "saturation", "warmth", "sharpness"]
-    param_icons = ["☀", "◐", "⬡", "◉", "◈"]
+    param_icons = ["☀️", "◐", "🎨", "🔥", "🔍"]
     
-    box_height = int(height * 0.13)
-    box_y = height - box_height - 12
-    box_width = int((width - 80) / 5)
-    spacing = 12
+    box_height = int(height * 0.12)
+    box_y = height - box_height - 10
+    box_width = int((width - 60) / 5)
+    spacing = 10
     
     for i, (param, icon) in enumerate(zip(param_names, param_icons)):
-        box_x = 20 + i * (box_width + spacing)
+        box_x = 10 + i * (box_width + spacing)
         
-        # Determine box color with modern palette
+        # Determine box color
         if param == selected_param:
-            color = MODERN_SUCCESS  # Modern green for selected
-            alpha = 0.95
+            color = (50, 200, 50)  # Green for selected
+            alpha = 0.9
         elif param == hover_param:
-            color = MODERN_WARNING  # Amber for hover
-            alpha = 0.75 + (hover_progress * 0.15)
+            color = (200, 200, 50)  # Yellow for hover
+            alpha = 0.7 + (hover_progress * 0.2)  # Fade in
         else:
-            color = (45, 45, 50)  # Dark gray for inactive
-            alpha = 0.7
+            color = (60, 60, 60)  # Gray for inactive
+            alpha = 0.6
         
-        # Modern shadow for box
-        output = _modern_shadow(output, (box_x, box_y), (box_x + box_width, box_y + box_height), blur=10, alpha=0.25)
-        
-        # Draw box with modern styling
+        # Draw box
         _rounded_rect(output, (box_x, box_y), (box_x + box_width, box_y + box_height), 
-                     color[::-1], radius=14, alpha=alpha)
+                     color, radius=10, alpha=alpha)
         
         # Draw parameter name
         text = f"{param.title()}"
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)[0]
+        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
         text_x = box_x + (box_width - text_size[0]) // 2
-        text_y = box_y + 22
+        text_y = box_y + 25
         cv2.putText(output, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.48, MODERN_TEXT[::-1], 1, lineType=cv2.LINE_AA)
+                   0.5, (255, 255, 255), 1, lineType=cv2.LINE_AA)
         
-        # Draw icon with modern style
-        icon_size = cv2.getTextSize(icon, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 2)[0]
+        # Draw icon
+        icon_size = cv2.getTextSize(icon, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
         icon_x = box_x + (box_width - icon_size[0]) // 2
-        icon_y = box_y + 58
+        icon_y = box_y + 50
         cv2.putText(output, icon, (icon_x, icon_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                   1.1, MODERN_TEXT[::-1], 2, lineType=cv2.LINE_AA)
+                   0.8, (255, 255, 255), 2, lineType=cv2.LINE_AA)
         
         # Draw current value
         value_text = f"{params[param]:+d}"
-        value_size = cv2.getTextSize(value_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)[0]
+        value_size = cv2.getTextSize(value_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
         value_x = box_x + (box_width - value_size[0]) // 2
-        value_y = box_y + box_height - 18
+        value_y = box_y + box_height - 15
         cv2.putText(output, value_text, (value_x, value_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.65, MODERN_TEXT_DIM[::-1], 2, lineType=cv2.LINE_AA)
+                   0.7, (220, 220, 220), 2, lineType=cv2.LINE_AA)
     
     # Draw slider if parameter is selected
     if selected_param:
-        slider_y = height - box_height - 85
+        slider_y = height - box_height - 70
         slider_width = width - 100
         slider_x_start = 50
         slider_x_end = slider_x_start + slider_width
         
-        # Draw slider track with modern style
+        # Draw slider track
         cv2.line(output, (slider_x_start, slider_y), (slider_x_end, slider_y), 
-                (60, 60, 65)[::-1], 5, lineType=cv2.LINE_AA)
+                (100, 100, 100), 4, lineType=cv2.LINE_AA)
         
         # Draw center mark (0 position)
         center_x = slider_x_start + slider_width // 2
-        cv2.line(output, (center_x, slider_y - 12), (center_x, slider_y + 12), 
-                MODERN_TEXT_DIM[::-1], 2, lineType=cv2.LINE_AA)
+        cv2.line(output, (center_x, slider_y - 10), (center_x, slider_y + 10), 
+                (150, 150, 150), 2, lineType=cv2.LINE_AA)
         
-        # Draw dead zone indicators with modern accent
+        # Draw dead zone indicators
         dead_zone_start = slider_x_start + int(slider_width * 0.33)
         dead_zone_end = slider_x_start + int(slider_width * 0.67)
         cv2.line(output, (dead_zone_start, slider_y), (dead_zone_end, slider_y), 
-                MODERN_SUCCESS[::-1], 7, lineType=cv2.LINE_AA)
+                (80, 180, 80), 6, lineType=cv2.LINE_AA)
         
-        # Draw current value position with modern styling
+        # Draw current value position
         value = params[selected_param]
-        normalized_value = (value + 50) / 100.0
+        normalized_value = (value + 50) / 100.0  # Map -50 to +50 -> 0 to 1
         dot_x = int(slider_x_start + normalized_value * slider_width)
+        cv2.circle(output, (dot_x, slider_y), 12, (50, 200, 50), -1, lineType=cv2.LINE_AA)
+        cv2.circle(output, (dot_x, slider_y), 8, (255, 255, 255), -1, lineType=cv2.LINE_AA)
         
-        # Outer glow
-        cv2.circle(output, (dot_x, slider_y), 16, MODERN_ACCENT[::-1], 2, lineType=cv2.LINE_AA)
-        # Inner fill
-        cv2.circle(output, (dot_x, slider_y), 10, MODERN_TEXT[::-1], -1, lineType=cv2.LINE_AA)
-        
-        # Draw value text above slider with modern styling
+        # Draw value text above slider
         value_text = f"{selected_param.title()}: {value:+d}"
-        text_size = cv2.getTextSize(value_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        text_size = cv2.getTextSize(value_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
         text_x = (width - text_size[0]) // 2
-        text_y = slider_y - 38
+        text_y = slider_y - 30
         
-        # Modern shadow and background
-        output = _modern_shadow(output, (text_x - 14, text_y - 32), (text_x + text_size[0] + 14, text_y + 12), blur=12, alpha=0.3)
-        _rounded_rect(output, (text_x - 14, text_y - 32), (text_x + text_size[0] + 14, text_y + 12), 
-                     MODERN_BG[::-1], radius=12, alpha=0.88)
+        # Background for text
+        _rounded_rect(output, (text_x - 10, text_y - 30), (text_x + text_size[0] + 10, text_y + 10), 
+                     (30, 30, 30), radius=8, alpha=0.7)
         cv2.putText(output, value_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                   0.8, MODERN_TEXT[::-1], 2, lineType=cv2.LINE_AA)
+                   0.9, (255, 255, 255), 2, lineType=cv2.LINE_AA)
     
-    # Draw gesture hints with modern styling
+    # Draw gesture hints (updated for two-hand gestures)
     hints = "Wrist: Select | Fist: Adjust | ✋✋ Save | ✊✊ Discard"
-    hint_size = cv2.getTextSize(hints, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 1)[0]
+    hint_size = cv2.getTextSize(hints, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
     hint_x = (width - hint_size[0]) // 2
-    hint_y = 42
-    
-    # Modern shadow and background
-    output = _modern_shadow(output, (hint_x - 14, hint_y - 28), (hint_x + hint_size[0] + 14, hint_y + 12), blur=12, alpha=0.3)
-    _rounded_rect(output, (hint_x - 14, hint_y - 28), (hint_x + hint_size[0] + 14, hint_y + 12), 
-                 MODERN_BG[::-1], radius=12, alpha=0.85)
+    hint_y = 40
+    _rounded_rect(output, (hint_x - 10, hint_y - 25), (hint_x + hint_size[0] + 10, hint_y + 10), 
+                 (30, 30, 30), radius=8, alpha=0.7)
     cv2.putText(output, hints, (hint_x, hint_y), cv2.FONT_HERSHEY_SIMPLEX, 
-               0.58, MODERN_TEXT_DIM[::-1], 1, lineType=cv2.LINE_AA)
+               0.6, (220, 220, 220), 1, lineType=cv2.LINE_AA)
     
-    # Draw hover progress bar if hovering with modern style
+    # Draw hover progress bar if hovering
     if hover_param and hover_progress > 0:
-        progress_bar_y = hint_y + 28
-        progress_bar_width = 240
-        progress_bar_height = 5
+        progress_bar_y = hint_y + 30
+        progress_bar_width = 200
+        progress_bar_height = 6
         progress_bar_x = (width - progress_bar_width) // 2
         
-        # Background with rounded ends
+        # Background
         cv2.rectangle(output, (progress_bar_x, progress_bar_y), 
                      (progress_bar_x + progress_bar_width, progress_bar_y + progress_bar_height),
-                     (50, 50, 55)[::-1], -1)
+                     (60, 60, 60), -1)
         
-        # Progress fill with modern color
+        # Progress fill
         fill_width = int(progress_bar_width * hover_progress)
         cv2.rectangle(output, (progress_bar_x, progress_bar_y), 
                      (progress_bar_x + fill_width, progress_bar_y + progress_bar_height),
-                     MODERN_WARNING[::-1], -1)
+                     (200, 200, 50), -1)
     
     return output
 
 def build_composite_frame(
     camera_feed: np.ndarray,
     ui_padding: int = 40,
-    background_color: Tuple[int, int, int] = None,
+    background_color: Tuple[int, int, int] = (18, 18, 20),
 ) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
     """
     Build a composite frame centered around the camera feed.
     For best fullscreen feel this returns a composite that matches the camera feed size
     except for a small padding for overlays; the viewport will fill the composite.
     """
-    if background_color is None:
-        background_color = MODERN_BG
-        
     feed_height, feed_width = camera_feed.shape[:2]
     # Keep composite same size as feed (to avoid odd positioned small frame).
     composite_width = feed_width
@@ -487,7 +445,7 @@ def build_composite_frame(
         bg_value = int(sum(background_color) / 3)
         composite = np.full((composite_height, composite_width), bg_value, dtype=camera_feed.dtype)
     else:
-        composite = np.full((composite_height, composite_width, 3), background_color[::-1], dtype=camera_feed.dtype)
+        composite = np.full((composite_height, composite_width, 3), background_color, dtype=camera_feed.dtype)
 
     # Place camera feed centered (here, it fills the composite)
     viewport_x = 0
