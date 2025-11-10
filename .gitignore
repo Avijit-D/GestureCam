@@ -68,3 +68,6 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+bugs.txt
+test_hand_landmarker.py
+inspect_tflite.py

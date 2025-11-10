@@ -188,7 +188,7 @@ class GestureRecognition:
             gestures.append(HandGesture("fist", max(confidence, 0.9), handedness, hand_id))
 
         if self._is_two_finger_v(fingers_extended, coords):
-            gestures.append(HandGesture("two_finger_v", 0.9, handedness, hand_id))
+            gestures.append(HandGesture("two_finger_v", 0.7, handedness, hand_id))
 
         if self._is_three_finger_salute(fingers_extended, coords):
             gestures.append(HandGesture("three_finger_salute", 0.9, handedness, hand_id))
@@ -208,7 +208,7 @@ class GestureRecognition:
             gestures.append(HandGesture("thumbs_up", 0.9, handedness, hand_id))
 
         if self._is_thumbs_down(coords, fingers_extended):
-            gestures.append(HandGesture("thumbs_down", 0.9, handedness, hand_id))
+            gestures.append(HandGesture("thumbs_down", 0.95, handedness, hand_id))
 
         return gestures
 
